@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="top-controls">
+    <h2>Панель управления влажностью</h2>
+    <a href="{{ url_for('logout') }}" class="btn">Выйти</a>
+</div>
+
+<div class="form-group">
+    <h3>Настройки</h3>
+    <form method="POST" action="{{ url_for('settings') }}">
+        <div class="form-inline">
+            <label for="max_humidity">Максимальная влажность (%):</label>
+            <input type="number" name="max_humidity" id="max_humidity" step="1" min="0" max="100" required>
+        </div>
+        <button type="submit" class="btn">Сохранить настройки</button>
+    </form>
+</div>
+
+<div class="form-group">
+    <h3>Текущая влажность: <span id="current_humidity">--</span>%</h3>
+    <p>Статус вытяжки: <span id="fan_status">Unknown</span></p>
+</div>
+
+<div class="chart" id="humidityChart"></div>
+
+<script>
+// Инициализация графика
+let maxHumidity = null;
+
+let trace = {
+    x: [],
+    y: [],
+    type: 'scatter',
+    mode: 'lines+markers',
+    name: 'Влажность'
+};
+
+let maxTrace = {
+    x: [],
+    y: [],
+    type: 'scatter',
+    mode: 'lines',
+    name: 'Макс. влажность',
+    line: {color: 'red', dash: 'dot'}
+};
+
+let layout = {
+    title: 'Влажность со временем',
+    xaxis: { title: 'Дата и время', tickangle: -45, automargin: true },
+    yaxis: { title: 'Влажность (%)' }
+};
+
+Plotly.newPlot('humidityChart', [trace, maxTrace], layout);
+
+function updateSettings() {
+    fetch('/api/settings')
+        .then(response => response.json())
+        .then(data => {
+            document.getElementById('max_humidity').value = data.max_humidity;
+            maxHumidity = data.max_humidity;
+        });
+}
+
+function updateHumidity() {
+    fetch('/api/current_humidity')
+        .then(response => response.json())
+        .then(data => {
+            if (data.humidity !== null) {
+                document.getElementById('current_humidity').textContent = data.humidity.toFixed(1);
+                document.getElementById('fan_status').textContent = data.fan_status;
+            
+                // Обновляем основной график
+                if (data.timestamp && (new Date(data.timestamp)).toLocaleString() == trace.x[trace.x.length - 1]) {
+                    return;
+                }
+
+                trace.x.push(new Date(data.timestamp).toLocaleString());
+                trace.y.push(data.humidity);
+
+                // Ограничиваем количество точек
+                if (trace.x.length > 30) {
+                    trace.x.shift();
+                    trace.y.shift();
+                }
+
+                // Обновляем максимальную линию
+                maxTrace.x = [...trace.x];
+                maxTrace.y = Array(trace.x.length).fill(maxHumidity);
+
+                // Перерисовываем график
+                Plotly.react('humidityChart', [trace, maxTrace], layout);
+            } else {
+                document.getElementById('current_humidity').textContent = "--";
+                document.getElementById('fan_status').textContent = "Нет данных";
+            }
+        });
+}
+
+function loadHistoricalData() {
+    fetch('/api/humidity_history')
+        .then(response => response.json())
+        .then(data => {
+             // Загружаем исторические данные
+             data.forEach(item => {
+                trace.x.push(new Date(item.timestamp).toLocaleString());
+                trace.y.push(item.humidity);
+            });
+
+            maxTrace.x = [...trace.x];
+            maxTrace.y = Array(trace.x.length).fill(maxHumidity);
+
+            // Перерисовываем график
+            Plotly.react('humidityChart', [trace, maxTrace], layout);
+        });
+}
+
+// Получение настроек
+updateSettings();
+// Загрузка истории при первой загрузке страницы
+loadHistoricalData();
+// Обновление данных каждые 2 секунды
+setInterval(updateHumidity, 2000);
+</script>
+{% endblock %}
